@@ -9,6 +9,39 @@ import ReturnManager from "./components/ReturnManager";
 import TicketList from "./components/TicketList";
 import AIChat from "./components/AIChat";
 
+const NAV_ITEMS = [
+  {
+    id: "chat",
+    label: "AI Assistant",
+    description: "Chat with ShopAssist AI",
+    icon: "✦",
+  },
+  {
+    id: "orders",
+    label: "Track Order",
+    description: "Delivery status & tracking",
+    icon: "📦",
+  },
+  {
+    id: "returns",
+    label: "Returns & Issues",
+    description: "Eligibility & requests",
+    icon: "↩️",
+  },
+  {
+    id: "refunds",
+    label: "Refund Status",
+    description: "Track a refund",
+    icon: "💳",
+  },
+  {
+    id: "tickets",
+    label: "Support Tickets",
+    description: "Your open requests",
+    icon: "🎫",
+  },
+];
+
 function App() {
   const [customer, setCustomer] = useState(() => {
     const savedCustomer = localStorage.getItem("shopassist_customer");
@@ -17,6 +50,8 @@ function App() {
       ? JSON.parse(savedCustomer)
       : null;
   });
+
+  const [activeView, setActiveView] = useState("chat");
 
   function handleLogin(customerData) {
     setCustomer(customerData);
@@ -35,130 +70,88 @@ function App() {
     return <Login onLogin={handleLogin} />;
   }
 
+  const initials = customer.name
+    ? customer.name
+        .split(" ")
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0].toUpperCase())
+        .join("")
+    : "U";
+
+  const activeItem =
+    NAV_ITEMS.find((item) => item.id === activeView) ||
+    NAV_ITEMS[0];
+
   // User is authenticated.
   return (
-    <div className="app">
-      <header className="navbar">
-        <div className="logo">ShopAssist</div>
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <div className="brand-mark">✦</div>
 
-        <nav>
-          <span>Hi, {customer.name}</span>
-
-          <button onClick={handleLogout}>
-            Logout
-          </button>
-        </nav>
-      </header>
-
-      <main>
-        <section className="hero">
-          <p className="eyebrow">
-            AI-POWERED CUSTOMER SUPPORT
-          </p>
-
-          <h1>
-            How can we help you today?
-          </h1>
-
-          <p className="hero-text">
-            Get instant help with orders, returns, refunds,
-            and delivery issues.
-          </p>
-
-          <button className="ai-button">
-            🎙️ Talk to AI Support
-          </button>
-        </section>
-
-        <section className="support-section">
-          <h2>
-            What do you need help with?
-          </h2>
-
-          <div className="support-grid">
-
-            <div className="support-card">
-              <div className="card-icon">📦</div>
-
-              <h3>
-                Track an Order
-              </h3>
-
-              <p>
-                Check your order status, delivery date,
-                and tracking details.
-              </p>
-
-              <button>
-                Track Order →
-              </button>
-            </div>
-
-            <div className="support-card">
-              <div className="card-icon">↩️</div>
-
-              <h3>
-                Returns & Issues
-              </h3>
-
-              <p>
-                Check return eligibility or report a
-                problem with your order.
-              </p>
-
-              <button>
-                Get Help →
-              </button>
-            </div>
-
-            <div className="support-card">
-              <div className="card-icon">💳</div>
-
-              <h3>
-                Refund Status
-              </h3>
-
-              <p>
-                Check whether your refund has been
-                initiated or processed.
-              </p>
-
-              <button>
-                Check Refund →
-              </button>
-            </div>
-
-            <div className="support-card">
-              <div className="card-icon">🎫</div>
-
-              <h3>
-                My Support Tickets
-              </h3>
-
-              <p>
-                View your existing support requests
-                and their current status.
-              </p>
-
-              <button>
-                View Tickets →
-              </button>
-            </div>
-
+          <div className="brand-text">
+            <span className="brand-name">ShopAssist</span>
+            <span className="brand-tag">AI Support Agent</span>
           </div>
-        </section>
+        </div>
 
-        <AIChat />
+        <nav className="sidebar-nav">
+          {NAV_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={
+                "nav-item" +
+                (activeView === item.id ? " active" : "")
+              }
+              onClick={() => setActiveView(item.id)}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-label">{item.label}</span>
+            </button>
+          ))}
+        </nav>
 
-        <OrderTracker />
+        <div className="sidebar-footer">
+          <div className="user-chip">
+            <div className="user-avatar">{initials}</div>
 
-        <RefundChecker />
+            <div className="user-meta">
+              <span className="user-name">{customer.name}</span>
+              <span className="user-email">{customer.email}</span>
+            </div>
+          </div>
 
-        <ReturnManager />
+          <button className="logout-button" onClick={handleLogout}>
+            Log out
+          </button>
+        </div>
+      </aside>
 
-        <TicketList />
+      <div className="main-area">
+        <header className="topbar">
+          <div className="topbar-heading">
+            <p className="topbar-eyebrow">ShopAssist AI</p>
+            <h1 className="topbar-title">{activeItem.label}</h1>
+          </div>
 
-      </main>
+          <div className="agent-status">
+            <span className="status-dot" />
+            AI Agent Online
+          </div>
+        </header>
+
+        <main className="content">
+          <div className="panel">
+            {activeView === "chat" && <AIChat />}
+            {activeView === "orders" && <OrderTracker />}
+            {activeView === "returns" && <ReturnManager />}
+            {activeView === "refunds" && <RefundChecker />}
+            {activeView === "tickets" && <TicketList />}
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

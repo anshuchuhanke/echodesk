@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import * as SpeechSDK from "microsoft-cognitiveservices-speech-sdk";
-import { askAI } from "../services/api";
+import {
+  askAI,
+  createAIReturnRequest,
+} from "../services/api";
 
 function AIChat() {
   const [messages, setMessages] = useState([
@@ -12,116 +15,228 @@ function AIChat() {
 
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("idle");
+  const [pendingReturn, setPendingReturn] = useState(null);
+
   const recognizerRef = useRef(null);
   const voiceActiveRef = useRef(false);
 
-async function speakText(text) {
-  try {
-    const tokenResponse = await fetch(
-      "http://localhost:5001/api/speech-token"
-    );
+  // =========================
+  // TEXT TO SPEECH
+  // =========================
 
-    if (!tokenResponse.ok) {
-      throw new Error("Could not get Speech token");
+  async function speakText(text) {
+    try {
+      const tokenResponse = await fetch(
+        "http://localhost:5001/api/speech-token"
+      );
+
+      if (!tokenResponse.ok) {
+        throw new Error("Could not get Speech token");
+      }
+
+      const { token, region } =
+        await tokenResponse.json();
+
+      const speechConfig =
+        SpeechSDK.SpeechConfig.fromAuthorizationToken(
+          token,
+          region
+        );
+
+      speechConfig.speechSynthesisVoiceName =
+        "en-IN-NeerjaNeural";
+
+      const synthesizer =
+        new SpeechSDK.SpeechSynthesizer(
+          speechConfig,
+          undefined
+        );
+
+      synthesizer.speakTextAsync(
+        text,
+        (result) => {
+          if (
+            result.reason ===
+            SpeechSDK.ResultReason.SynthesizingAudioCompleted
+          ) {
+            console.log(
+              "AI voice response completed."
+            );
+          } else {
+            console.error(
+              "Speech synthesis failed:",
+              result.errorDetails
+            );
+          }
+
+          synthesizer.close();
+        },
+        (error) => {
+          console.error(
+            "Speech synthesis error:",
+            error
+          );
+
+          synthesizer.close();
+        }
+      );
+    } catch (error) {
+      console.error(
+        "Text-to-Speech setup error:",
+        error
+      );
+    }
+  }
+
+  // =========================
+  // CREATE RETURN REQUEST
+  // =========================
+
+  async function confirmPendingReturn(token) {
+    if (!pendingReturn) {
+      return;
     }
 
-    const { token, region } = await tokenResponse.json();
+    try {
+      const result =
+        await createAIReturnRequest(
+          pendingReturn.orderId,
+          pendingReturn.productId,
+          pendingReturn.reason,
+          token
+        );
 
-    const speechConfig =
-      SpeechSDK.SpeechConfig.fromAuthorizationToken(
-        token,
-        region
+      const reply =
+        `Your return request has been created successfully for ` +
+        `${pendingReturn.orderId}. Your return request ID is ` +
+        `${result.return.id}.`;
+
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: reply,
+        },
+      ]);
+
+      setPendingReturn(null);
+
+      speakText(reply);
+    } catch (error) {
+      console.error(
+        "Return request error:",
+        error
       );
 
-    speechConfig.speechSynthesisVoiceName =
-      "en-IN-NeerjaNeural";
+      const reply =
+        error.message ||
+        "Sorry, I couldn't create the return request.";
 
-    const synthesizer =
-      new SpeechSDK.SpeechSynthesizer(
-        speechConfig,
-        undefined
-      );
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: reply,
+        },
+      ]);
 
-    synthesizer.speakTextAsync(
-      text,
-      (result) => {
-        if (
-          result.reason ===
-          SpeechSDK.ResultReason.SynthesizingAudioCompleted
-        ) {
-          console.log("AI voice response completed.");
-        } else {
-          console.error(
-            "Speech synthesis failed:",
-            result.errorDetails
-          );
-        }
-
-        synthesizer.close();
-      },
-      (error) => {
-        console.error("Speech synthesis error:", error);
-        synthesizer.close();
-      }
-    );
-  } catch (error) {
-    console.error("Text-to-Speech setup error:", error);
+      speakText(reply);
+    }
   }
-}
+
+  // =========================
+  // SEND TEXT MESSAGE
+  // =========================
 
   async function handleSend() {
-  if (!input.trim()) {
-    return;
-  }
-
-  const userMessage = {
-    role: "user",
-    text: input,
-  };
-
-  const messageText = input;
-
-  setMessages((current) => [
-    ...current,
-    userMessage,
-  ]);
-
-  setInput("");
-  setStatus("thinking");
-
-  try {
-    const token = localStorage.getItem("shopassist_token");
-
-    if (!token) {
-      throw new Error("User is not logged in");
+    if (!input.trim()) {
+      return;
     }
 
-    const data = await askAI(messageText, token);
+    const messageText = input.trim();
+
+    const userMessage = {
+      role: "user",
+      text: messageText,
+    };
 
     setMessages((current) => [
       ...current,
-      {
-        role: "assistant",
-        text: data.reply,
-      },
+      userMessage,
     ]);
 
-    speakText(data.reply);
+    setInput("");
+    setStatus("thinking");
 
-  } catch (error) {
-    console.error("AI response error:", error);
+    try {
+      const token =
+        localStorage.getItem("shopassist_token");
 
-    setMessages((current) => [
-      ...current,
-      {
-        role: "assistant",
-        text: "Sorry, I couldn't connect to the AI assistant right now.",
-      },
-    ]);
-  } finally {
-    setStatus("idle");
+      if (!token) {
+        throw new Error("User is not logged in");
+      }
+
+      // Check whether this is confirmation
+      // for a pending return request.
+      if (
+        pendingReturn &&
+        /^(yes|yeah|yep|sure|okay|ok|confirm|confirmed|go ahead|do it|please do|yes please)$/i.test(
+          messageText
+        )
+      ) {
+        await confirmPendingReturn(token);
+
+        return;
+      }
+
+      const data = await askAI(
+        messageText,
+        token,
+        messages
+      );
+
+      // Store return information when
+      // confirmation is required.
+      if (
+        data.action === "confirm_return" &&
+        data.returnRequest
+      ) {
+        setPendingReturn(
+          data.returnRequest
+        );
+      }
+
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: data.reply,
+        },
+      ]);
+
+      speakText(data.reply);
+    } catch (error) {
+      console.error(
+        "AI response error:",
+        error
+      );
+
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text:
+            "Sorry, I couldn't connect to the AI assistant right now.",
+        },
+      ]);
+    } finally {
+      setStatus("idle");
+    }
   }
-}
+
+  // =========================
+  // ENTER KEY
+  // =========================
 
   function handleKeyDown(event) {
     if (event.key === "Enter") {
@@ -129,140 +244,285 @@ async function speakText(text) {
     }
   }
 
- async function handleVoice() {
-  if (voiceActiveRef.current) {
-    voiceActiveRef.current = false;
+  // =========================
+  // VOICE INPUT
+  // =========================
 
-    if (recognizerRef.current) {
-      recognizerRef.current.stopContinuousRecognitionAsync(
-        () => {
-          recognizerRef.current?.close();
-          recognizerRef.current = null;
-        },
-        (error) => {
-          console.error("Error stopping recognition:", error);
-          recognizerRef.current = null;
-        }
-      );
-    }
+  async function handleVoice() {
+    // Stop listening if already active
+    if (voiceActiveRef.current) {
+      voiceActiveRef.current = false;
 
-    setStatus("idle");
-    return;
-  }
+      if (recognizerRef.current) {
+        recognizerRef.current.close();
+        recognizerRef.current = null;
+      }
 
-  voiceActiveRef.current = true;
-  setStatus("listening");
-
-  try {
-    const tokenResponse = await fetch(
-      "http://localhost:5001/api/speech-token"
-    );
-
-    if (!tokenResponse.ok) {
-      throw new Error("Could not get Speech token");
-    }
-
-    const { token, region } = await tokenResponse.json();
-
-    if (!voiceActiveRef.current) {
+      setStatus("idle");
       return;
     }
 
-    const speechConfig =
-      SpeechSDK.SpeechConfig.fromAuthorizationToken(
-        token,
-        region
+    voiceActiveRef.current = true;
+    setStatus("listening");
+
+    try {
+      const tokenResponse = await fetch(
+        "http://localhost:5001/api/speech-token"
       );
 
-    speechConfig.speechRecognitionLanguage = "en-IN";
-
-    const audioConfig =
-      SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
-
-    const recognizer = new SpeechSDK.SpeechRecognizer(
-      speechConfig,
-      audioConfig
-    );
-
-    recognizerRef.current = recognizer;
-
-    recognizer.recognizeOnceAsync(
-      (result) => {
-        if (
-          result.reason ===
-          SpeechSDK.ResultReason.RecognizedSpeech
-        ) {
-          console.log("Recognized speech:", result.text);
-          setInput(result.text);
-        } else if (
-          result.reason ===
-          SpeechSDK.ResultReason.NoMatch
-        ) {
-          console.log("No speech recognized.");
-        } else {
-          console.error(
-            "Speech recognition failed:",
-            result.reason,
-            result.errorDetails
-          );
-        }
-
-        voiceActiveRef.current = false;
-        setStatus("idle");
-
-        if (recognizerRef.current === recognizer) {
-          recognizerRef.current = null;
-        }
-      },
-      (error) => {
-        console.error("Speech recognition error:", error);
-
-        voiceActiveRef.current = false;
-        setStatus("idle");
-
-        if (recognizerRef.current === recognizer) {
-          recognizerRef.current = null;
-        }
+      if (!tokenResponse.ok) {
+        throw new Error(
+          "Could not get Speech token"
+        );
       }
-    );
-  } catch (error) {
-    console.error("Speech-to-Text setup error:", error);
 
-    voiceActiveRef.current = false;
-    recognizerRef.current = null;
-    setStatus("idle");
+      const {
+        token,
+        region,
+      } = await tokenResponse.json();
+
+      if (!voiceActiveRef.current) {
+        return;
+      }
+
+      const speechConfig =
+        SpeechSDK.SpeechConfig.fromAuthorizationToken(
+          token,
+          region
+        );
+
+      speechConfig.speechRecognitionLanguage =
+        "en-IN";
+
+      const audioConfig =
+        SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+
+      const recognizer =
+        new SpeechSDK.SpeechRecognizer(
+          speechConfig,
+          audioConfig
+        );
+
+      recognizerRef.current = recognizer;
+
+      recognizer.recognizeOnceAsync(
+        async (result) => {
+          if (
+            result.reason ===
+            SpeechSDK.ResultReason.RecognizedSpeech
+          ) {
+            console.log(
+              "Recognized speech:",
+              result.text
+            );
+
+            const messageText =
+              result.text.trim();
+
+            if (!messageText) {
+              voiceActiveRef.current = false;
+              setStatus("idle");
+              return;
+            }
+
+            setInput(messageText);
+
+            setMessages((current) => [
+              ...current,
+              {
+                role: "user",
+                text: messageText,
+              },
+            ]);
+
+            setStatus("thinking");
+
+            const token =
+              localStorage.getItem(
+                "shopassist_token"
+              );
+
+            if (!token) {
+              console.error(
+                "User is not logged in"
+              );
+
+              setStatus("idle");
+              return;
+            }
+
+            // Handle voice confirmation
+            // for pending return request.
+            if (
+              pendingReturn &&
+              /^(yes|yeah|yep|sure|okay|ok|confirm|confirmed|go ahead|do it|please do|yes please)$/i.test(
+                messageText
+              )
+            ) {
+              await confirmPendingReturn(
+                token
+              );
+
+              voiceActiveRef.current = false;
+              setStatus("idle");
+
+              if (
+                recognizerRef.current ===
+                recognizer
+              ) {
+                recognizerRef.current = null;
+              }
+
+              return;
+            }
+
+            try {
+              const data = await askAI(
+                messageText,
+                token,
+                messages
+              );
+
+              if (
+                data.action ===
+                  "confirm_return" &&
+                data.returnRequest
+              ) {
+                setPendingReturn(
+                  data.returnRequest
+                );
+              }
+
+              setMessages((current) => [
+                ...current,
+                {
+                  role: "assistant",
+                  text: data.reply,
+                },
+              ]);
+
+              speakText(data.reply);
+            } catch (error) {
+              console.error(
+                "AI response error:",
+                error
+              );
+
+              setMessages((current) => [
+                ...current,
+                {
+                  role: "assistant",
+                  text:
+                    "Sorry, I couldn't connect to the AI assistant right now.",
+                },
+              ]);
+            } finally {
+              setStatus("idle");
+            }
+          } else if (
+            result.reason ===
+            SpeechSDK.ResultReason.NoMatch
+          ) {
+            console.log(
+              "No speech recognized."
+            );
+
+            setStatus("idle");
+          } else {
+            console.error(
+              "Speech recognition failed:",
+              result.reason,
+              result.errorDetails
+            );
+
+            setStatus("idle");
+          }
+
+          voiceActiveRef.current = false;
+
+          if (
+            recognizerRef.current ===
+            recognizer
+          ) {
+            recognizerRef.current = null;
+          }
+        },
+        (error) => {
+          console.error(
+            "Speech recognition error:",
+            error
+          );
+
+          voiceActiveRef.current = false;
+          setStatus("idle");
+
+          if (
+            recognizerRef.current ===
+            recognizer
+          ) {
+            recognizerRef.current = null;
+          }
+        }
+      );
+    } catch (error) {
+      console.error(
+        "Speech-to-Text setup error:",
+        error
+      );
+
+      voiceActiveRef.current = false;
+      recognizerRef.current = null;
+      setStatus("idle");
+    }
   }
-}
+
+  // =========================
+  // CLEANUP
+  // =========================
 
   useEffect(() => {
     return () => {
       voiceActiveRef.current = false;
-      recognizerRef.current?.close();
+
+      if (recognizerRef.current) {
+        recognizerRef.current.close();
+        recognizerRef.current = null;
+      }
     };
   }, []);
+
+  // =========================
+  // UI
+  // =========================
 
   return (
     <section className="ai-section">
       <div className="ai-container">
 
         <div className="ai-header">
-          <div className="ai-icon">✦</div>
+          <div className="ai-icon">
+            ✦
+          </div>
 
           <div>
             <h2>ShopAssist AI</h2>
-            <p>Your intelligent customer support assistant</p>
+            <p>
+              Your intelligent customer support assistant
+            </p>
           </div>
         </div>
 
         <div className="chat-window">
-          {messages.map((message, index) => (
-            <div
-              key={index}
-              className={`message ${message.role}`}
-            >
-              {message.text}
-            </div>
-          ))}
+          {messages.map(
+            (message, index) => (
+              <div
+                key={index}
+                className={`message ${message.role}`}
+              >
+                {message.text}
+              </div>
+            )
+          )}
 
           {status === "thinking" && (
             <div className="message assistant">
@@ -277,7 +537,9 @@ async function speakText(text) {
             type="text"
             placeholder="Ask about your order, refund, or return..."
             value={input}
-            onChange={(event) => setInput(event.target.value)}
+            onChange={(event) =>
+              setInput(event.target.value)
+            }
             onKeyDown={handleKeyDown}
           />
 
@@ -287,7 +549,9 @@ async function speakText(text) {
 
           <button
             className={`voice-button ${
-              status === "listening" ? "active" : ""
+              status === "listening"
+                ? "active"
+                : ""
             }`}
             onClick={handleVoice}
           >
@@ -299,9 +563,14 @@ async function speakText(text) {
         </div>
 
         <div className="ai-status">
-          {status === "idle" && "AI Support is ready"}
-          {status === "listening" && "Listening for your request..."}
-          {status === "thinking" && "AI is thinking..."}
+          {status === "idle" &&
+            "AI Support is ready"}
+
+          {status === "listening" &&
+            "Listening for your request..."}
+
+          {status === "thinking" &&
+            "AI is thinking..."}
         </div>
 
       </div>
