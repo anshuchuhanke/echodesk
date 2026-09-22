@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import * as SpeechSDK from "microsoft-cognitiveservices-speech-sdk";
+import { askAI } from "../services/api";
 
 function AIChat() {
   const [messages, setMessages] = useState([
@@ -10,36 +12,55 @@ function AIChat() {
 
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("idle");
+  const recognizerRef = useRef(null);
+  const voiceActiveRef = useRef(false);
 
-  function handleSend() {
-    if (!input.trim()) {
-      return;
+  async function handleSend() {
+  if (!input.trim()) {
+    return;
+  }
+
+  const userMessage = {
+    role: "user",
+    text: input,
+  };
+
+  const messageText = input;
+
+  setMessages((current) => [...current, userMessage]);
+  setInput("");
+  setStatus("thinking");
+
+  try {
+    const token = localStorage.getItem("shopassist_token");
+
+    if (!token) {
+      throw new Error("User is not logged in");
     }
 
-    const userMessage = {
-      role: "user",
-      text: input,
-    };
+    const data = await askAI(messageText, token);
 
-    setMessages((current) => [...current, userMessage]);
-    setInput("");
+    setMessages((current) => [
+      ...current,
+      {
+        role: "assistant",
+        text: data.reply,
+      },
+    ]);
+  } catch (error) {
+    console.error("AI response error:", error);
 
-    // Temporary AI response.
-    // We'll replace this with the real Foundry agent later.
-    setStatus("thinking");
-
-    setTimeout(() => {
-      setMessages((current) => [
-        ...current,
-        {
-          role: "assistant",
-          text: "I can help with orders, returns, refunds, and delivery issues. The AI agent will be connected here next.",
-        },
-      ]);
-
-      setStatus("idle");
-    }, 800);
+    setMessages((current) => [
+      ...current,
+      {
+        role: "assistant",
+        text: "Sorry, I couldn't connect to the AI assistant right now.",
+      },
+    ]);
+  } finally {
+    setStatus("idle");
   }
+}
 
   function handleKeyDown(event) {
     if (event.key === "Enter") {
@@ -47,11 +68,117 @@ function AIChat() {
     }
   }
 
-  function handleVoice() {
-    setStatus((current) =>
-      current === "listening" ? "idle" : "listening"
-    );
+ async function handleVoice() {
+  if (voiceActiveRef.current) {
+    voiceActiveRef.current = false;
+
+    if (recognizerRef.current) {
+      recognizerRef.current.stopContinuousRecognitionAsync(
+        () => {
+          recognizerRef.current?.close();
+          recognizerRef.current = null;
+        },
+        (error) => {
+          console.error("Error stopping recognition:", error);
+          recognizerRef.current = null;
+        }
+      );
+    }
+
+    setStatus("idle");
+    return;
   }
+
+  voiceActiveRef.current = true;
+  setStatus("listening");
+
+  try {
+    const tokenResponse = await fetch(
+      "http://localhost:5001/api/speech-token"
+    );
+
+    if (!tokenResponse.ok) {
+      throw new Error("Could not get Speech token");
+    }
+
+    const { token, region } = await tokenResponse.json();
+
+    if (!voiceActiveRef.current) {
+      return;
+    }
+
+    const speechConfig =
+      SpeechSDK.SpeechConfig.fromAuthorizationToken(
+        token,
+        region
+      );
+
+    speechConfig.speechRecognitionLanguage = "en-IN";
+
+    const audioConfig =
+      SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+
+    const recognizer = new SpeechSDK.SpeechRecognizer(
+      speechConfig,
+      audioConfig
+    );
+
+    recognizerRef.current = recognizer;
+
+    recognizer.recognizeOnceAsync(
+      (result) => {
+        if (
+          result.reason ===
+          SpeechSDK.ResultReason.RecognizedSpeech
+        ) {
+          console.log("Recognized speech:", result.text);
+          setInput(result.text);
+        } else if (
+          result.reason ===
+          SpeechSDK.ResultReason.NoMatch
+        ) {
+          console.log("No speech recognized.");
+        } else {
+          console.error(
+            "Speech recognition failed:",
+            result.reason,
+            result.errorDetails
+          );
+        }
+
+        voiceActiveRef.current = false;
+        setStatus("idle");
+
+        if (recognizerRef.current === recognizer) {
+          recognizerRef.current = null;
+        }
+      },
+      (error) => {
+        console.error("Speech recognition error:", error);
+
+        voiceActiveRef.current = false;
+        setStatus("idle");
+
+        if (recognizerRef.current === recognizer) {
+          recognizerRef.current = null;
+        }
+      }
+    );
+  } catch (error) {
+    console.error("Speech-to-Text setup error:", error);
+
+    voiceActiveRef.current = false;
+    recognizerRef.current = null;
+    setStatus("idle");
+  }
+}
+
+  useEffect(() => {
+    return () => {
+      voiceActiveRef.current = false;
+      recognizerRef.current?.close();
+    };
+  }, []);
 
   return (
     <section className="ai-section">

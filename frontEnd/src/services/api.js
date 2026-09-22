@@ -1,5 +1,6 @@
 const API_URL = "http://localhost:5001/api";
 
+
 export async function getOrder(orderId, token) {
   const response = await fetch(
     `${API_URL}/orders/${orderId}`,
@@ -95,6 +96,25 @@ export async function loginUser(email, password) {
 
   if (!response.ok) {
     throw new Error("Login failed");
+  }
+
+  return response.json();
+}
+
+export async function askAI(message, token) {
+  const response = await fetch(`${API_URL}/support/tickets/ai`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      message,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not get AI response");
   }
 
   return response.json();

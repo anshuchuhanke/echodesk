@@ -1,9 +1,36 @@
 const express = require("express");
 const pool = require("../db/database");
+const { askFoundry } = require("../services/foundryService");
 
 const router = express.Router();
 
 const authenticateToken = require("../middleware/authMiddleware");
+
+router.post("/ai", authenticateToken, async (req, res) => {
+    try {
+        const { message } = req.body;
+
+        if (!message || !message.trim()) {
+            return res.status(400).json({
+                error: "Message is required"
+            });
+        }
+
+        const reply = await askFoundry(message);
+
+        res.json({
+            success: true,
+            reply
+        });
+
+    } catch (error) {
+        console.error("AI support error:", error);
+
+        res.status(500).json({
+            error: "Failed to get AI response"
+        });
+    }
+});
 
 router.get("/:me", authenticateToken , async (req, res) => {
     try {
