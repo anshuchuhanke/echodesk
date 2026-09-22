@@ -15,6 +15,60 @@ function AIChat() {
   const recognizerRef = useRef(null);
   const voiceActiveRef = useRef(false);
 
+async function speakText(text) {
+  try {
+    const tokenResponse = await fetch(
+      "http://localhost:5001/api/speech-token"
+    );
+
+    if (!tokenResponse.ok) {
+      throw new Error("Could not get Speech token");
+    }
+
+    const { token, region } = await tokenResponse.json();
+
+    const speechConfig =
+      SpeechSDK.SpeechConfig.fromAuthorizationToken(
+        token,
+        region
+      );
+
+    speechConfig.speechSynthesisVoiceName =
+      "en-IN-NeerjaNeural";
+
+    const synthesizer =
+      new SpeechSDK.SpeechSynthesizer(
+        speechConfig,
+        undefined
+      );
+
+    synthesizer.speakTextAsync(
+      text,
+      (result) => {
+        if (
+          result.reason ===
+          SpeechSDK.ResultReason.SynthesizingAudioCompleted
+        ) {
+          console.log("AI voice response completed.");
+        } else {
+          console.error(
+            "Speech synthesis failed:",
+            result.errorDetails
+          );
+        }
+
+        synthesizer.close();
+      },
+      (error) => {
+        console.error("Speech synthesis error:", error);
+        synthesizer.close();
+      }
+    );
+  } catch (error) {
+    console.error("Text-to-Speech setup error:", error);
+  }
+}
+
   async function handleSend() {
   if (!input.trim()) {
     return;
@@ -27,7 +81,11 @@ function AIChat() {
 
   const messageText = input;
 
-  setMessages((current) => [...current, userMessage]);
+  setMessages((current) => [
+    ...current,
+    userMessage,
+  ]);
+
   setInput("");
   setStatus("thinking");
 
@@ -47,6 +105,9 @@ function AIChat() {
         text: data.reply,
       },
     ]);
+
+    speakText(data.reply);
+
   } catch (error) {
     console.error("AI response error:", error);
 
